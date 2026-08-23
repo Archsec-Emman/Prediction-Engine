@@ -1,291 +1,186 @@
 package main
 
 import (
-	"embed"
-	"flag"
 	"fmt"
-	"io/fs"
-	"io/ioutil"
-	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/Archsec-Emman/Prediction-Engine/internal/engine"
 )
 
-//go:embed embedded/*
-var toolbox embed.FS
+const version = "1.0.0"
 
 const banner = `
-   ╔══════════════════════════════════════════════════════════╗
-   ║                                                        ║
-   ║   ██████╗ ██████╗ ███████╗██████╗ ██╗ ██████╗████████╗ ║
-   ║   ██╔══██╗██╔══██╗██╔════╝██╔══██╗██║██╔════╝╚══██╔══╝ ║
-   ║   ██████╔╝██████╔╝█████╗  ██║  ██║██║██║        ██║    ║
-   ║   ██╔═══╝ ██╔══██╗██╔══╝  ██║  ██║██║██║        ██║    ║
-   ║   ██║     ██║  ██║███████╗██████╔╝██║╚██████╗   ██║    ║
-   ║   ╚═╝     ╚═╝  ╚═╝╚══════╝╚═════╝ ╚═╝ ╚═════╝   ╚═╝    ║
-   ║                                                        ║
-   ║     Prediction Engine — The Unified Market Oracle      ║
-   ║                                                        ║
-   ║   by Archsec-Emman (@Archsec-Emman)                    ║
-   ║   orch-web3-quant-arsenal Edition                      ║
-   ║   https://github.com/orch-web3-quant-arsenal/Prediction-Engine ║
-   ║                                                        ║
-   ╚══════════════════════════════════════════════════════════╝
+ Prediction Engine %s
+ A single launcher for three open-source prediction-market tools.
+
+ This binary does not implement any trading logic itself. It installs,
+ checks and runs three upstream projects in parallel and reports their
+ real exit status. All credit belongs to the upstream authors - see
+ 'prediction-engine status' for the full attribution list.
 `
 
-var (
-	targetURL  string
-	onlyEngine string
-	skipEngine string
-	balance    float64
-	servePort  int
-)
-
-func init() {
-	flag.StringVar(&targetURL, "u", "", "Polymarket or Kalshi URL to analyze")
-	flag.StringVar(&onlyEngine, "only", "", "Run only specified engines (analysis,papertrader,backtest)")
-	flag.StringVar(&skipEngine, "skip", "", "Skip engines (comma-separated)")
-	flag.Float64Var(&balance, "balance", 10000.0, "Starting paper balance for trading engine")
-	flag.IntVar(&servePort, "serve", 0, "Start analysis web UI on given port (0=disabled)")
-}
+var engines = engine.Registry()
 
 func main() {
-	flag.Usage = func() {
-		fmt.Print(banner)
-		fmt.Println("\nUsage:  prediction-engine -u <market-url>  [--only <engine>]  [--skip <engine>]")
-		fmt.Println("        prediction-engine --serve 3000")
-		fmt.Println("\nExamples:")
-		fmt.Println("  prediction-engine -u https://polymarket.com/event/bitcoin-price")
-		fmt.Println("  prediction-engine -u https://polymarket.com/event/bitcoin-price --balance 5000")
-		fmt.Println("  prediction-engine --serve 3000")
-		fmt.Println("\nFlags:")
-		flag.PrintDefaults()
-	}
-
-	flag.Parse()
-
-	if targetURL == "" && servePort == 0 {
-		flag.Usage()
+	if len(os.Args) < 2 {
+		usage()
 		os.Exit(1)
 	}
-
-	fmt.Println(banner)
-
-	// If serve mode, start the analysis web UI
-	if servePort > 0 {
-		startWebUI(servePort)
-		return
+	switch os.Args[1] {
+	case "status":
+		cmdStatus()
+	case "install":
+		cmdInstall(os.Args[2:])
+	case "run":
+		cmdRun(os.Args[2:])
+	case "version", "-v", "--version":
+		fmt.Println("prediction-engine", version)
+	case "help", "-h", "--help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", os.Args[1])
+		usage()
+		os.Exit(1)
 	}
+}
 
-	// Extract tools to temp directory
-	tmpDir, err := ioutil.TempDir("", "prediction-engine")
-	if err != nil {
-		log.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+func usage() {
+	fmt.Printf(banner+"\n", version)
+	fmt.Println(`Usage:
+  prediction-engine status              show engines, dependencies and install state
+  prediction-engine install <name|all>  clone upstream repo and run install steps
+  prediction-engine run <name|all> [--] [args...]
+                                        run an engine (extra args passed through)
+  prediction-engine version`)
+}
 
-	// Extract all embedded tools
-	analysisDir := filepath.Join(tmpDir, "analysis")
-	if err := extractDir("embedded/analysis", analysisDir); err != nil {
-		log.Printf("[!] Failed to extract analysis engine: %v", err)
-	}
-
-	paperTraderDir := filepath.Join(tmpDir, "papertrader")
-	if err := extractDir("embedded/papertrader", paperTraderDir); err != nil {
-		log.Printf("[!] Failed to extract paper trader: %v", err)
-	}
-
-	backtestDir := filepath.Join(tmpDir, "backtest")
-	if err := extractDir("embedded/backtest", backtestDir); err != nil {
-		log.Printf("[!] Failed to extract backtest engine: %v", err)
-	}
-
-	// Determine which engines to run
-	runSet := map[string]bool{
-		"analysis":    true,
-		"papertrader": true,
-		"backtest":    true,
-	}
-	if onlyEngine != "" {
-		runSet = make(map[string]bool)
-		for _, e := range strings.Split(onlyEngine, ",") {
-			runSet[strings.TrimSpace(e)] = true
+func cmdStatus() {
+	fmt.Printf("%-12s %-9s %-14s %s\n", "ENGINE", "INSTALLED", "DEPS", "UPSTREAM")
+	for _, e := range engines {
+		inst := "no"
+		if engine.Installed(e) {
+			inst = "yes"
 		}
-	}
-	if skipEngine != "" {
-		for _, e := range strings.Split(skipEngine, ",") {
-			runSet[strings.TrimSpace(e)] = false
-		}
-	}
-
-	var wg sync.WaitGroup
-	outputs := make(map[string]string)
-	var mu sync.Mutex
-
-	// Engine 1: AI Analysis (Polyseer-like analysis of the market URL)
-	if runSet["analysis"] {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			output := fmt.Sprintf("Analysis Engine - Target: %s\n", targetURL)
-			output += "========================================\n"
-			output += "The Analysis Engine performs multi-agent AI research:\n"
-			output += "  - Platform detection (Polymarket/Kalshi)\n"
-			output += "  - Multi-agent research strategy generation\n"
-			output += "  - Evidence collection from academic, web, and market sources\n"
-			output += "  - Bayesian probability aggregation\n"
-			output += "  - Final verdict with pNeutral and pAware probabilities\n\n"
-
-			// Attempt to use the Next.js dev server if available
-			output += "[*] Note: Analysis engine requires Node.js to run the full UI.\n"
-			output += "    Start with: prediction-engine --serve 3000\n"
-			output += "    Then open http://localhost:3000 and paste the target URL.\n\n"
-
-			// Check for Python-based analysis (if the tool has a CLI mode)
-			pythonAnalysis := filepath.Join(analysisDir, "analyze.py")
-			if _, err := os.Stat(pythonAnalysis); err == nil {
-				cmd := exec.Command("python3", pythonAnalysis, targetURL)
-				cmd.Dir = analysisDir
-				out, err := cmd.Output()
-				if err == nil {
-					output += string(out)
-				}
-			}
-
-			mu.Lock()
-			outputs["Analysis"] = output
-			mu.Unlock()
-		}()
-	}
-
-	// Engine 2: Paper Trading (polymarket-paper-trader)
-	if runSet["papertrader"] {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cliPath := filepath.Join(paperTraderDir, "cli.py")
-			if _, err := os.Stat(cliPath); os.IsNotExist(err) {
-				// Try setup.py install
-				installCmd := exec.Command("pip3", "install", "-e", paperTraderDir, "--quiet")
-				installCmd.Run()
-			}
-
-			cmd := exec.Command("python3", "-m", "pe_trader.cli",
-				"init", "--balance", fmt.Sprintf("%.0f", balance))
-			cmd.Dir = paperTraderDir
-			out, err := cmd.Output()
-
-			mu.Lock()
+		var deps []string
+		for _, d := range e.Requires {
+			_, err := engine.CheckDep(d)
+			mark := "ok"
 			if err != nil {
-				outputs["PaperTrader"] = fmt.Sprintf("Paper trader initialized with $%.0f balance.\nUse 'pe-trader markets search <query>' to find markets.\nUse 'pe-trader buy <slug> <outcome> <amount>' to trade.\nError output: %v", balance, err)
-			} else {
-				outputs["PaperTrader"] = fmt.Sprintf("Paper Trader Engine initialized with $%.0f balance.\n%s", balance, string(out))
+				mark = "MISSING"
 			}
-			mu.Unlock()
-		}()
+			deps = append(deps, d.Bin+":"+mark)
+		}
+		fmt.Printf("%-12s %-9s %-14s %s\n", e.Name, inst, strings.Join(deps, " "), e.Upstream)
 	}
-
-	// Engine 3: Backtesting (prediction-market-backtesting)
-	if runSet["backtest"] {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			output := fmt.Sprintf("Backtesting Engine\n")
-			output += "========================================\n"
-			output += "High-performance backtesting framework built on NautilusTrader:\n"
-			output += "  - Rust-native data conversion for speed\n"
-			output += "  - Polymarket exchange adapter with order book replay\n"
-			output += "  - Multi-market strategy configs\n"
-			output += "  - Equity curves, P&L, Sharpe ratios, drawdown analysis\n"
-			output += "  - Statistical optimizers (Optuna TPE)\n"
-			output += "  - Joint portfolio multi-replay runners\n\n"
-
-			// Check if the framework has a runner script
-			runnerPath := filepath.Join(backtestDir, "runners")
-			if _, err := os.Stat(runnerPath); err == nil {
-				output += fmt.Sprintf("[*] Backtest runners available in: %s\n", runnerPath)
-				output += "    Run with: python3 -m nautilus_trader.backtest\n"
-			}
-			output += "\n[*] Requires NautilusTrader installed: pip install nautilus_trader\n"
-
-			mu.Lock()
-			outputs["Backtest"] = output
-			mu.Unlock()
-		}()
+	fmt.Println("\nCredits:")
+	for _, e := range engines {
+		fmt.Printf("  %-12s %s (%s)\n", e.Name, e.Credit, e.Upstream)
 	}
+}
 
-	wg.Wait()
+func cmdInstall(args []string) {
+	if len(args) < 1 {
+		fmt.Println("usage: prediction-engine install <name|all>")
+		os.Exit(1)
+	}
+	targets, err := selectEngines(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, e := range targets {
+		fmt.Printf("==> %s: %s\n", e.Name, e.Upstream)
+		if err := installEngine(e); err != nil {
+			fmt.Fprintf(os.Stderr, "install %s failed: %v\n", e.Name, err)
+			os.Exit(1)
+		}
+	}
+	fmt.Println("install complete")
+}
 
-	// Print combined report
-	fmt.Println("======================================")
-	fmt.Println("  Prediction Engine Combined Report")
-	fmt.Println("======================================")
-	fmt.Println()
+func installEngine(e engine.Engine) error {
+	if err := os.MkdirAll(engine.InstallRoot(), 0o755); err != nil {
+		return err
+	}
+	if !engine.Installed(e) {
+		if err := engine.Run("git", filepath.Dir(engine.InstallRoot()),
+			[]string{"clone", "--depth", "1", e.Upstream, engine.EngineDir(e)}, nil); err != nil {
+			return fmt.Errorf("clone: %w", err)
+		}
+	} else {
+		fmt.Printf("==> %s already cloned, updating\n", e.Name)
+		if err := engine.Run("git", engine.EngineDir(e), []string{"pull", "--ff-only"}, nil); err != nil {
+			fmt.Printf("==> update skipped (%v)\n", err)
+		}
+	}
+	for _, step := range e.Install {
+		fmt.Printf("==> %s: %s\n", e.Name, strings.Join(step.Cmd, " "))
+		if err := engine.Run(step.Cmd[0], engine.EngineDir(e), step.Cmd[1:], nil); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(step.Cmd, " "), err)
+		}
+	}
+	return nil
+}
 
-	engineOrder := []string{"Analysis", "PaperTrader", "Backtest"}
-	for _, name := range engineOrder {
-		out, ok := outputs[name]
-		if !ok {
+func cmdRun(args []string) {
+	if len(args) < 1 {
+		fmt.Println("usage: prediction-engine run <name|all> [--] [args...]")
+		os.Exit(1)
+	}
+	passThrough := args[1:]
+	if len(passThrough) > 0 && passThrough[0] == "--" {
+		passThrough = passThrough[1:]
+	}
+	targets, err := selectEngines(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	var wg sync.WaitGroup
+	results := make(map[string]error)
+	var mu sync.Mutex
+	order := make([]string, 0, len(targets))
+	for _, e := range targets {
+		if !engine.Installed(e) {
+			fmt.Printf("[%-12s] not installed - run 'prediction-engine install %s' first\n", e.Name, e.Name)
 			continue
 		}
-		fmt.Printf("--- %s ---\n", name)
-		fmt.Println(out)
-		fmt.Println()
+		order = append(order, e.Name)
+		wg.Add(1)
+		go func(e engine.Engine) {
+			defer wg.Done()
+			cmdArgs := append(append([]string{}, e.DefaultRun...), passThrough...)
+			fmt.Printf("[%-12s] starting: %s\n", e.Name, strings.Join(cmdArgs, " "))
+			err := engine.Run(cmdArgs[0], engine.EngineDir(e), cmdArgs[1:], nil)
+			mu.Lock()
+			results[e.Name] = err
+			mu.Unlock()
+		}(e)
 	}
-
-	fmt.Println("=== DONE ===")
-	fmt.Printf("\n⚡ Prediction Engine completed multi-engine analysis.\n")
+	wg.Wait()
+	fmt.Print(engine.FormatSummary(results, order))
+	failed := false
+	for _, err := range results {
+		if err != nil {
+			failed = true
+			break
+		}
+	}
+	if failed {
+		os.Exit(1)
+	}
 }
 
-func startWebUI(port int) {
-	tmpDir, err := ioutil.TempDir("", "prediction-engine-ui")
+func selectEngines(name string) ([]engine.Engine, error) {
+	if name == "all" {
+		return engines, nil
+	}
+	e, err := engine.ByName(name)
 	if err != nil {
-		log.Fatalf("Failed to create temp dir: %v", err)
+		return nil, err
 	}
-
-	analysisDir := filepath.Join(tmpDir, "analysis")
-	if err := extractDir("embedded/analysis", analysisDir); err != nil {
-		log.Fatalf("Failed to extract web UI: %v", err)
-	}
-
-	fmt.Printf("[*] Starting Analysis Web UI on port %d...\n", port)
-	fmt.Printf("    Open http://localhost:%d in your browser.\n", port)
-	fmt.Println("    Press Ctrl+C to stop.")
-
-	cmd := exec.Command("npm", "run", "dev", "--", "-p", fmt.Sprintf("%d", port))
-	cmd.Dir = analysisDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("NEXT_PUBLIC_APP_MODE=self-hosted"),
-		fmt.Sprintf("PORT=%d", port),
-	)
-
-	if err := cmd.Run(); err != nil {
-		log.Printf("[!] Web server exited: %v", err)
-	}
-}
-
-func extractDir(embedPath, destDir string) error {
-	return fs.WalkDir(toolbox, embedPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relPath, err := filepath.Rel(embedPath, path)
-		if err != nil {
-			return err
-		}
-		destPath := filepath.Join(destDir, relPath)
-		if d.IsDir() {
-			return os.MkdirAll(destPath, 0755)
-		}
-		data, err := toolbox.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return ioutil.WriteFile(destPath, data, 0644)
-	})
+	return []engine.Engine{*e}, nil
 }

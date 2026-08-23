@@ -1,3 +1,3 @@
-module github.com/orch-web3-quant-arsenal/Prediction-Engine
+module github.com/Archsec-Emman/Prediction-Engine
 
-go 1.26.3
+go 1.22

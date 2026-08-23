@@ -1,146 +1,61 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/orch-web3-quant-arsenal/Prediction-Engine/master/predicition%20engine.png" alt="403-Killchain Banner" width="600">
+  <img src="https://raw.githubusercontent.com/Archsec-Emman/Prediction-Engine/main/prediction-engine.png" alt="Prediction Engine" width="600">
 </p>
 
+# Prediction Engine
 
-# 🔮 Prediction Engine
+[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/Archsec-Emman/Prediction-Engine/ci.yml?branch=main&label=build)](https://github.com/Archsec-Emman/Prediction-Engine/actions)
 
-### The Unified Prediction Market Oracle
+**A single launcher that installs and runs three open-source prediction-market tools in parallel — with honest exit codes and full attribution.**
 
-**Prediction Engine** combines three independent prediction‑market tools into a single, self‑contained binary — AI‑driven market analysis, high‑fidelity paper trading, and institutional‑grade strategy backtesting. Deploy all three engines in parallel against any Polymarket or Kalshi event, and receive a combined intelligence report that covers *why* a market moves, *how* to trade it, and *what* strategies have historically worked.
+> **What this is NOT:** this binary contains no trading logic, no AI, and no backtesting engine of its own. It is a dependency-checking orchestrator for three upstream projects by other authors. Earlier versions of this repository vendored those projects under the same name; that was misleading and has been removed.
 
----
+## The three engines
 
-## 💡 How Prediction Engine Works
+| Engine | What it does | Upstream (all credit to) |
+|--------|--------------|--------------------------|
+| `polyseer` | Multi-agent AI market research: evidence grading, Bayesian probability aggregation, web UI | [Polyseer](https://github.com/yorkeccak/Polyseer) by yorkeccak |
+| `papertrader` | Polymarket paper trading for agents: MCP server, order-book execution, fee/slippage model | [polymarket-paper-trader](https://github.com/agent-next/polymarket-paper-trader) by agent-next |
+| `backtest` | NautilusTrader-based strategy backtesting: book replay, Optuna optimisation | [prediction-market-backtesting](https://github.com/evan-kolberg/prediction-market-backtesting) by evan-kolberg |
 
-The tool embeds three complementary engines. Each attacks the prediction market problem from a different angle.
+## Install
 
-### Engine 1 — AI‑Driven Market Analysis
-
-This engine performs deep, multi‑agent research on any market URL:
-
-- **Platform Detection** — automatically identifies Polymarket or Kalshi events and fetches real‑time data
-- **Multi‑Agent Orchestration** — a Planner agent generates research strategies with sub‑claims and search seeds; Research agents query academic papers, news, market data, and proprietary intelligence
-- **Evidence Classification** — each source is graded A (primary) through D (speculative) with verifiability, consistency, independence, and recency scores
-- **Bayesian Probability Aggregation** — log‑likelihood ratios combined with correlation adjustments produce two probabilities: `pNeutral` (objective) and `pAware` (market‑informed)
-- **Final Verdict** — a structured analyst‑grade report with evidence weights, confidence intervals, and key insights
-
-The analysis engine uses large language models (GPT‑4o / GPT‑5) for reasoning and Valyu for real‑time research access. Self‑hosted mode requires only API keys and runs entirely on your machine.
-
-### Engine 2 — High‑Fidelity Paper Trading
-
-This engine simulates real Polymarket trades with institutional accuracy:
-
-- **Level‑by‑Level Order Book Execution** — orders walk the real ask/bid book, consuming liquidity at each price level
-- **Exact Fee Model** — uses Polymarket's actual fee formula: `bps/10000 × min(price, 1-price) × shares`
-- **Slippage Tracking** — every trade records fill quality in basis points vs. the midpoint
-- **Limit Order State Machine** — full lifecycle for GTC (good‑til‑cancelled) and GTD (good‑til‑date) orders
-- **Strategy Backtesting** — replay any strategy against historical price snapshots
-- **Multi‑Outcome Markets** — supports binary (YES/NO) and multi‑outcome markets
-- **MCP Server** — 26 Model Context Protocol tools for AI agents to trade autonomously
-
-Start with $10,000 paper balance and trade real order books with zero risk. Your paper P&L matches real P&L within the spread.
-
-### Engine 3 — Institutional‑Grade Backtesting
-
-This engine provides production‑grade strategy backtesting built on NautilusTrader:
-
-- **Rust‑Native Data Conversion** — high‑performance data pipeline with Parquet‑based catalog storage
-- **Polymarket Exchange Adapter** — custom adapters with order book deltas, trade ticks, and book replay
-- **Multi‑Market Strategy Configs** — design and test strategies across any number of markets simultaneously
-- **Statistical Optimizers** — Tree‑structured Parzen Estimator (TPE) via Optuna for hyper‑parameter optimization
-- **Rich Charting** — equity curves, individual market P&L, drawdown, Sharpe ratio, monthly returns, cumulative Brier advantage
-- **Joint Portfolio Runners** — run multiple strategies with isolated accounts and compare head‑to‑head
-- **Live Sandbox Plumbing** — BTC 5‑minute market hooks for near‑live testing
-
-Supports Polymarket natively, with Telonex data vendor integration and planned Limitless.exchange / Opinion.trade support.
-
-**All three engines run concurrently.** You get AI analysis, trading simulation, and strategy backtesting in a single command.
-
----
-
-## 🧰 Features
-
-| Feature | Description |
-|---------|-------------|
-| 🔬 **AI Market Analysis** | Multi-agent LLM research with Bayesian probability |
-| 📊 **Paper Trading** | Level-by-level order book simulation with real prices |
-| ⚡ **High‑Performance Backtesting** | Rust-native engine via NautilusTrader |
-| 🧠 **Engine Selection** | Use `--only` or `--skip` to pick specific engines |
-| 📋 **Unified Reporting** | Clean, sectioned output across all three engines |
-| 🔒 **Self‑Contained Binary** | No external dependencies at runtime — all engines embedded |
-| 🪶 **Static Binary** | Runs on Linux, macOS, and Windows without installers |
-| 🌐 **Web UI Mode** | Start the analysis dashboard with `--serve <port>` |
-
----
-
----
-## 🚀 Installation
-
-### From Pre‑compiled Binary
-Download from [Releases](https://github.com/orch-web3-quant-arsenal/Prediction-Engine/releases)
-
-### Build from Source (Go 1.20+ required)
 ```bash
-git clone https://github.com/orch-web3-quant-arsenal/Prediction-Engine
-cd Prediction-Engine
-go build -o Prediction-Engine
-```
----
-
----
-### Runtime Requirements (for full engine functionality)
-- **Python 3.10+** — for paper trading and backtesting engines
-- **Node.js 18+** — for the analysis web UI
-- **NautilusTrader** — pip install nautilus_trader (for backtesting)
----
----
-
-## 🎯 Usage
-```bash
-./Prediction-Engine -u https://polymarket.com/event/bitcoin-price
-```
----
-
----
-### Flags
-
-| Flags | Description |
-|---------|-------------|
-| `**-u**` | Target Polymarket or Kalshi URL (required for analysis mode) |
-| `**--balance**` | Starting paper balance for trading engine (default: 10000) |
-| `**--only**` | Run only specified engines (`analysis`, `papertrader`, `backtest`) |
-| `**--skip**` | Skip engines (comma‑separated) |
-| `**--serve**` | Start analysis web UI on given port (e.g., `--serve 3000`) |
-| `**-h**` | Show banner and help |
----
-
-----
-
-### Examples
-***Full Prediction Engine scan:**
-```bash
-./Prediction-Engine -u "https://polymarket.com/event/bitcoin-price"
+go install github.com/Archsec-Emman/Prediction-Engine@latest
+# or build from source:
+git clone https://github.com/Archsec-Emman/Prediction-Engine.git
+cd Prediction-Engine && go build -o prediction-engine .
 ```
 
-**Paper trading only with custom balance:**
+Zero dependencies beyond the Go standard library.
+
+## Usage
+
 ```bash
-./Prediction-Engine -u "https://polymarket.com/event/bitcoin-price" --only papertrader --balance 5000
+# see engines, dependency status (git/node/python/pip), install state, credits
+prediction-engine status
+
+# clone upstream repos into ~/.prediction-engine and run their installers
+prediction-engine install all
+prediction-engine install polyseer
+
+# run one or all engines (output streamed live per engine, summary at end)
+prediction-engine run papertrader
+prediction-engine run polyseer            # starts the web UI dev server
+prediction-engine run all -- --help       # args after -- are passed through
 ```
 
-**Start the web dashboard:**
-```bash
-./Prediction-Engine --serve 3000
-```
----
+Exit code reflects reality: if any requested engine fails, `run` exits non-zero and the summary shows which one.
 
-### 👤 Author & Organisation
-- **Archsec-Emman** — @Archsec-Emman
-- **orch‑web3‑quant‑arsenal** — https://github.com/orch-web3-quant-arsenal
+## Design notes
 
-### 📄 License
-**MIT** License © 2026 Archsec-Emman
-The embedded engines contain code from multiple open‑source projects — see `THIRD_PARTY_LICENSES.md` for full attributions.
+- **Nothing is vendored.** Engines are cloned from their canonical repositories at install time, so you always run upstream's latest code with upstream's own license.
+- **Dependency checks before action.** `status` reports exactly which tools (`git`, `node`, `npm`, `python`, `pip`) are missing before any install or run attempt.
+- **Windows-safe process handling.** Batch-file shims (`npm.cmd` etc.) are invoked through raw command lines so paths containing spaces work.
+- **Tested.** Unit tests cover dependency resolution, output streaming, exit-code propagation and the registry contract; CI runs them on Linux, Windows and macOS.
 
+## License
 
-
+MIT — see [LICENSE](LICENSE). The engines it launches remain under their own licenses (see each upstream repository).
